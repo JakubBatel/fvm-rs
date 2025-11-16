@@ -114,12 +114,120 @@ pub async fn list_available_versions() -> Result<FlutterReleases> {
     });
 }
 
-pub async fn uninstall(version: &str) -> Result<(), anyhow::Error> {
+/// Get the engine hash used by a specific Flutter version
+/// Returns None if the version is not installed or the engine.stamp file is missing
+pub async fn get_engine_hash_for_version(version: &str) -> Result<Option<String>> {
     let flutter_dir = utils::flutter_version_dir(version)?;
-    if flutter_dir.exists() {
-        fs::remove_dir_all(flutter_dir).await?;
+    let stamp_file = flutter_dir.join("bin").join("cache").join("engine.stamp");
+
+    if !stamp_file.exists() {
+        return Ok(None);
     }
-    return Ok(());
+
+    match fs::read_to_string(&stamp_file).await {
+        Ok(hash) => Ok(Some(hash.trim().to_string())),
+        Err(_) => Ok(None),
+    }
+}
+
+/// Result of cleaning up unused engines
+pub struct EngineCleanupResult {
+    pub removed_engines: Vec<String>,
+    pub failed_removals: Vec<(String, String)>, // (hash, error_message)
+}
+
+/// Clean up engine caches that are no longer used by any installed Flutter version
+/// Returns details about removed and failed engines
+pub async fn cleanup_unused_engines() -> Result<EngineCleanupResult> {
+    let engine_dir = utils::shared_engine_dir()?;
+
+    // If the engine directory doesn't exist, nothing to clean up
+    if !engine_dir.exists() {
+        return Ok(EngineCleanupResult {
+            removed_engines: vec![],
+            failed_removals: vec![],
+        });
+    }
+
+    // Collect all engine hashes currently in use by installed Flutter versions
+    let installed_versions = list_installed_versions().await?;
+    let mut used_engines = HashSet::new();
+
+    for version in installed_versions {
+        if let Some(hash) = get_engine_hash_for_version(&version).await? {
+            used_engines.insert(hash);
+        }
+    }
+
+    // Find and delete unused engines
+    let mut removed_engines = vec![];
+    let mut failed_removals = vec![];
+    let mut entries = fs::read_dir(&engine_dir).await?;
+
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+
+        if !path.is_dir() {
+            continue;
+        }
+
+        if let Some(hash) = path.file_name().and_then(|s| s.to_str()) {
+            if !used_engines.contains(hash) {
+                // This engine is not used by any Flutter version, delete it
+                match fs::remove_dir_all(&path).await {
+                    Ok(_) => {
+                        removed_engines.push(hash.to_string());
+                    }
+                    Err(e) => {
+                        failed_removals.push((hash.to_string(), e.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    return Ok(EngineCleanupResult {
+        removed_engines,
+        failed_removals,
+    });
+}
+
+pub async fn uninstall(version: &str) -> Result<Option<String>> {
+    let flutter_dir = utils::flutter_version_dir(version)?;
+
+    if !flutter_dir.exists() {
+        return Ok(None);
+    }
+
+    // Get the engine hash before deleting the directory
+    let engine_hash = get_engine_hash_for_version(version).await?;
+
+    // Delete the Flutter directory
+    fs::remove_dir_all(&flutter_dir).await?;
+
+    // Remove the worktree from git
+    let shared_repo_path = utils::shared_flutter_dir()?;
+    let worktree_name = format!("fvm-{}", version);
+
+    // Spawn blocking task for git operations
+    let shared_repo_path_clone = shared_repo_path.clone();
+    let worktree_name_clone = worktree_name.clone();
+
+    task::spawn_blocking(move || {
+        // Open the shared bare repository
+        if let Ok(repo) = Repository::open_bare(&shared_repo_path_clone) {
+            // Find and remove the worktree
+            if let Ok(worktree) = repo.find_worktree(&worktree_name_clone) {
+                // The worktree directory is already deleted, but we need to prune it from git's tracking
+                // This is safe - if the worktree is already gone, this is a no-op
+                let _ = worktree.prune(None);
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await??;
+
+    return Ok(engine_hash);
 }
 
 fn verify_installed(version: &str) -> Result<bool> {
@@ -145,8 +253,6 @@ fn verify_installed(version: &str) -> Result<bool> {
 async fn install(version: &str) -> Result<()> {
     let engine_hash = fetch_engine_hash(version).await?;
 
-    println!("Resolved engine hash: {}", engine_hash);
-
     let engine_dir = utils::shared_engine_hash_dir(&engine_hash)?;
     let flutter_dir = utils::flutter_version_dir(version)?;
 
@@ -156,15 +262,12 @@ async fn install(version: &str) -> Result<()> {
     engine_result?;
     flutter_result?;
 
-    println!("Linking engine to flutter");
     link_engine_to_flutter(&engine_dir, &flutter_dir).await?;
 
     return Ok(());
 }
 
 async fn fetch_engine_hash(version: &str) -> Result<String> {
-    println!("Fetching engine hash for version: {}", version);
-
     let url = format!(
         "https://raw.githubusercontent.com/flutter/flutter/{}/bin/internal/engine.version",
         version
@@ -264,7 +367,6 @@ async fn install_flutter(version_dir: &PathBuf) -> Result<()> {
     let shared_dir = utils::shared_flutter_dir()?;
 
     let repo = ensure_shared_repo(url, &shared_dir).await?;
-    println!("Shared repo obtained ({:?})", repo.path());
 
     let parent_dir = version_dir.parent().unwrap();
     fs::create_dir_all(parent_dir).await?;

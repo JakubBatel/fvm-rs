@@ -9,7 +9,8 @@ pub struct InstallArgs {
 }
 
 pub async fn run(args: InstallArgs) -> Result<()> {
+    println!("Installing Flutter SDK {}...", args.version);
     sdk_manager::ensure_installed(&args.version).await?;
-    println!("Flutter SDK {} has been installed successfully", args.version);
+    println!("✓ Flutter SDK {} has been installed successfully", args.version);
     return Ok(());
 }

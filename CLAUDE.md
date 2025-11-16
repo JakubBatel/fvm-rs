@@ -58,6 +58,68 @@ Engine download and Flutter repository setup happen concurrently (see `sdk_manag
 - `utils.rs` - Path resolution for fvm-rs directory structure
 - `commands/` - Command implementations mirroring FVM's API
 
+## Architecture: Separation of Logic and Presentation
+
+**IMPORTANT: This project follows a strict separation between business logic and presentation:**
+
+### Logic Layer (`sdk_manager.rs`, `config_manager.rs`)
+- **NEVER** use `println!`, `eprintln!`, or any other user-facing output
+- **ALWAYS** return `Result<T>` types - let errors propagate upward
+- Return structured data that commands can present (e.g., `EngineCleanupResult` instead of just a count)
+- Focus solely on core functionality: file operations, git operations, network requests, etc.
+
+### Presentation Layer (`src/commands/*.rs`)
+- **ALWAYS** handle all user-facing output: success messages, error messages, progress indicators
+- Format errors in a user-friendly way
+- Display progress and status updates
+- Use checkmarks (✓) and crosses (✗) for visual feedback
+- Handle `Result` types from the logic layer and present them appropriately
+
+### Example Pattern
+
+**Bad (mixing logic and presentation):**
+```rust
+// In sdk_manager.rs
+pub async fn cleanup_unused_engines() -> Result<usize> {
+    // ...
+    println!("Removed engine {}", hash);  // ❌ NO!
+    // ...
+}
+```
+
+**Good (separated):**
+```rust
+// In sdk_manager.rs
+pub struct EngineCleanupResult {
+    pub removed_engines: Vec<String>,
+    pub failed_removals: Vec<(String, String)>,
+}
+
+pub async fn cleanup_unused_engines() -> Result<EngineCleanupResult> {
+    // ... pure logic, no printing ...
+    Ok(EngineCleanupResult { removed_engines, failed_removals })
+}
+
+// In src/commands/rm.rs
+match sdk_manager::cleanup_unused_engines().await {
+    Ok(result) => {
+        for hash in &result.removed_engines {
+            println!("✓ Removed unused engine: {}", hash);
+        }
+        for (hash, error) in &result.failed_removals {
+            eprintln!("✗ Failed to remove engine {}: {}", hash, error);
+        }
+    }
+    Err(e) => eprintln!("Warning: Engine cleanup failed: {}", e),
+}
+```
+
+This separation ensures:
+- Logic modules are testable without capturing stdout
+- Presentation can be changed without touching core logic
+- Error messages can be localized or customized at the command level
+- The same logic functions can be used by different commands with different presentation needs
+
 ## Development Commands
 
 **Build:**
