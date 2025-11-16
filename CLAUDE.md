@@ -120,6 +120,128 @@ This separation ensures:
 - Error messages can be localized or customized at the command level
 - The same logic functions can be used by different commands with different presentation needs
 
+## Logging and Verbose Output
+
+**Framework:** This project uses the `tracing` crate for structured logging.
+
+### Global Verbose Flag
+
+The CLI supports a global `--verbose` / `-v` flag that enables debug-level logging:
+
+```bash
+fvm-rs -v install 3.24.0        # Verbose install
+fvm-rs --verbose use stable     # Verbose use command
+fvm-rs install 3.24.0           # Normal (quiet) operation
+```
+
+**Important:** The verbose flag is **global** and must appear **before** the subcommand.
+
+### Logging Guidelines
+
+#### Logic Layer (sdk_manager.rs, config_manager.rs)
+Use `tracing` macros for internal operations - never `println!` or `eprintln!`:
+
+- `debug!()` - Detailed diagnostic information (only shown with `-v`):
+  - Git operations (clone, fetch, checkout, worktree creation)
+  - File system operations (mkdir, symlink, copy, remove)
+  - Network operations (HTTP requests, download URLs)
+  - Engine/cache details (hash calculations, cache hits/misses, deduplication)
+- `warn!()` - Recoverable issues that don't fail the operation
+- `error!()` - Errors before returning `Err()`
+
+**Example:**
+```rust
+// In sdk_manager.rs
+pub async fn install_flutter(version: &str) -> Result<PathBuf> {
+    debug!("Installing Flutter version: {}", version);
+
+    let flutter_dir = get_flutter_path(version);
+    debug!("Target directory: {}", flutter_dir.display());
+
+    tokio::fs::create_dir_all(&flutter_dir).await?;
+    debug!("Created directory: {}", flutter_dir.display());
+
+    // ... rest of implementation
+}
+```
+
+#### Presentation Layer (src/commands/*.rs)
+- Use `info!()` for high-level progress steps (shown even without `-v`)
+- Use `println!()` for normal command output (version lists, tables, etc.)
+- Use `eprintln!()` for user-facing error messages
+
+**Example:**
+```rust
+// In src/commands/install.rs
+pub async fn run(args: InstallArgs) -> Result<()> {
+    info!("Starting installation of Flutter {}", args.version);
+
+    match sdk_manager::install(&args.version).await {
+        Ok(path) => {
+            println!("✓ Flutter {} installed successfully", args.version);
+            debug!("Installed at: {}", path.display());
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("✗ Installation failed: {}", e);
+            Err(e)
+        }
+    }
+}
+```
+
+### Log Levels and Format
+
+The logging output uses a compact, readable format:
+```
+HH:MM:SS L message
+```
+
+Where:
+- `HH:MM:SS` - Local time in 24-hour format (gray)
+- `L` - Single-letter log level (colored):
+  - `E` - Error (red)
+  - `W` - Warning (yellow)
+  - `I` - Info (green)
+  - `D` - Debug (blue)
+  - `T` - Trace (purple)
+
+**Example output:**
+```
+23:09:45 I Listing installed Flutter SDK versions
+23:09:45 D Listing installed versions from: /Users/jakub/.fvm-rs/flutter
+23:09:45 D Found installed version: 3.38.1
+```
+
+**Log levels:**
+- **Normal mode** (default): Only `WARN` and `ERROR` from logic layer, plus all command output
+- **Verbose mode** (`-v`): All `DEBUG` and above, showing detailed operations
+
+### What Gets Logged in Verbose Mode
+
+1. **Git operations:**
+   - Repository initialization/cloning
+   - Fetch operations and progress
+   - Worktree creation and checkout
+   - Branch/tag resolution
+
+2. **File system operations:**
+   - Directory creation
+   - Symlink operations (creation, target paths)
+   - File/directory removal
+   - Path resolutions
+
+3. **Network operations:**
+   - Engine download URLs
+   - HTTP request/response details
+   - Download progress
+
+4. **Engine/cache operations:**
+   - Engine hash calculations
+   - Cache hit/miss decisions
+   - Deduplication logic
+   - Shared engine reuse
+
 ## Development Commands
 
 **Build:**

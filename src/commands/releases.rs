@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use clap::Args;
 use colored::Colorize;
 use tabled::{Table, Tabled, settings::Style};
+use tracing::info;
 
 #[derive(Debug, Clone, Args)]
 pub struct ReleasesArgs {
@@ -18,6 +19,8 @@ pub struct ReleasesArgs {
 }
 
 pub async fn run(args: ReleasesArgs) -> Result<()> {
+    info!("Fetching available Flutter releases for channel: {}", args.channel);
+
     let (versions_result, installed_versions_result) = tokio::join!(
         sdk_manager::list_available_versions(),
         sdk_manager::list_installed_versions()
@@ -25,6 +28,8 @@ pub async fn run(args: ReleasesArgs) -> Result<()> {
 
     let versions = versions_result?;
     let installed_versions: HashSet<String> = installed_versions_result?.into_iter().collect();
+
+    info!("Retrieved {} releases, {} installed locally", versions.releases.len(), installed_versions.len());
 
     let releases_rows: Vec<ReleaseRow> = versions
         .releases

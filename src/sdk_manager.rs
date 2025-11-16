@@ -5,6 +5,7 @@ use git2::{FetchOptions, Repository, build::RepoBuilder};
 use serde::Deserialize;
 use std::{collections::HashSet, io::Cursor, path::PathBuf};
 use tokio::{fs, task};
+use tracing::{debug, warn};
 use zip::ZipArchive;
 
 
@@ -50,8 +51,10 @@ pub async fn ensure_installed(version: &str) -> Result<()> {
 
 pub async fn list_installed_versions() -> Result<Vec<String>> {
     let flutter_root = utils::flutter_dir()?;
+    debug!("Listing installed versions from: {}", flutter_root.display());
 
     if !flutter_root.exists() {
+        debug!("Flutter root directory does not exist yet");
         return Ok(vec![]);
     }
 
@@ -62,11 +65,13 @@ pub async fn list_installed_versions() -> Result<Vec<String>> {
         let path = entry.path();
         if fs::metadata(&path).await?.is_dir() {
             if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                debug!("Found installed version: {}", name);
                 versions.push(name.to_string());
             }
         }
     }
 
+    debug!("Found {} installed version(s)", versions.len());
     return Ok(versions);
 }
 
@@ -76,11 +81,13 @@ pub async fn list_available_versions() -> Result<FlutterReleases> {
     let url = format!(
         "https://storage.googleapis.com/flutter_infra_release/releases/releases_{platform}.json"
     );
+    debug!("Fetching available Flutter releases from: {}", url);
     let response = reqwest::get(&url)
         .await
         .context("Failed to fetch list of available versions")?
         .error_for_status()?;
 
+    debug!("Parsing releases JSON response");
     let parsed: FlutterReleasesResponse = response.json().await.context("Invalid JSON")?;
 
     let mut seen = HashSet::new();
@@ -140,9 +147,11 @@ pub struct EngineCleanupResult {
 /// Returns details about removed and failed engines
 pub async fn cleanup_unused_engines() -> Result<EngineCleanupResult> {
     let engine_dir = utils::shared_engine_dir()?;
+    debug!("Checking for unused engines in: {}", engine_dir.display());
 
     // If the engine directory doesn't exist, nothing to clean up
     if !engine_dir.exists() {
+        debug!("Engine directory does not exist, nothing to clean up");
         return Ok(EngineCleanupResult {
             removed_engines: vec![],
             failed_removals: vec![],
@@ -155,9 +164,12 @@ pub async fn cleanup_unused_engines() -> Result<EngineCleanupResult> {
 
     for version in installed_versions {
         if let Some(hash) = get_engine_hash_for_version(&version).await? {
+            debug!("Version {} uses engine hash: {}", version, hash);
             used_engines.insert(hash);
         }
     }
+
+    debug!("Found {} engine hash(es) in use", used_engines.len());
 
     // Find and delete unused engines
     let mut removed_engines = vec![];
@@ -174,14 +186,19 @@ pub async fn cleanup_unused_engines() -> Result<EngineCleanupResult> {
         if let Some(hash) = path.file_name().and_then(|s| s.to_str()) {
             if !used_engines.contains(hash) {
                 // This engine is not used by any Flutter version, delete it
+                debug!("Removing unused engine: {}", hash);
                 match fs::remove_dir_all(&path).await {
                     Ok(_) => {
+                        debug!("Successfully removed engine: {}", hash);
                         removed_engines.push(hash.to_string());
                     }
                     Err(e) => {
+                        warn!("Failed to remove engine {}: {}", hash, e);
                         failed_removals.push((hash.to_string(), e.to_string()));
                     }
                 }
+            } else {
+                debug!("Engine {} is in use, keeping it", hash);
             }
         }
     }
@@ -194,20 +211,27 @@ pub async fn cleanup_unused_engines() -> Result<EngineCleanupResult> {
 
 pub async fn uninstall(version: &str) -> Result<Option<String>> {
     let flutter_dir = utils::flutter_version_dir(version)?;
+    debug!("Uninstalling Flutter version: {}", version);
 
     if !flutter_dir.exists() {
+        debug!("Version {} not found at {}", version, flutter_dir.display());
         return Ok(None);
     }
 
     // Get the engine hash before deleting the directory
     let engine_hash = get_engine_hash_for_version(version).await?;
+    if let Some(hash) = &engine_hash {
+        debug!("Version {} uses engine hash: {}", version, hash);
+    }
 
     // Delete the Flutter directory
+    debug!("Removing directory: {}", flutter_dir.display());
     fs::remove_dir_all(&flutter_dir).await?;
 
     // Remove the worktree from git
     let shared_repo_path = utils::shared_flutter_dir()?;
     let worktree_name = format!("fvm-{}", version);
+    debug!("Pruning git worktree: {}", worktree_name);
 
     // Spawn blocking task for git operations
     let shared_repo_path_clone = shared_repo_path.clone();
@@ -227,6 +251,7 @@ pub async fn uninstall(version: &str) -> Result<Option<String>> {
     })
     .await??;
 
+    debug!("Successfully uninstalled Flutter version: {}", version);
     return Ok(engine_hash);
 }
 
@@ -251,19 +276,26 @@ fn verify_installed(version: &str) -> Result<bool> {
 }
 
 async fn install(version: &str) -> Result<()> {
+    debug!("Starting installation of Flutter version: {}", version);
     let engine_hash = fetch_engine_hash(version).await?;
+    debug!("Engine hash for version {}: {}", version, engine_hash);
 
     let engine_dir = utils::shared_engine_hash_dir(&engine_hash)?;
     let flutter_dir = utils::flutter_version_dir(version)?;
+    debug!("Engine directory: {}", engine_dir.display());
+    debug!("Flutter directory: {}", flutter_dir.display());
 
+    debug!("Installing engine and Flutter in parallel");
     let (engine_result, flutter_result) =
         tokio::join!(install_engine(&engine_dir), install_flutter(&flutter_dir),);
 
     engine_result?;
     flutter_result?;
 
+    debug!("Linking engine to Flutter installation");
     link_engine_to_flutter(&engine_dir, &flutter_dir).await?;
 
+    debug!("Successfully completed installation of Flutter {}", version);
     return Ok(());
 }
 
@@ -272,22 +304,27 @@ async fn fetch_engine_hash(version: &str) -> Result<String> {
         "https://raw.githubusercontent.com/flutter/flutter/{}/bin/internal/engine.version",
         version
     );
+    debug!("Fetching engine hash from: {}", url);
 
     let response = reqwest::get(&url)
         .await
         .context("Failed to fetch engine hash")?
         .error_for_status()?;
 
-    return Ok(response
+    let hash = response
         .text()
         .await
         .context("Could not read engine.version")?
         .trim()
-        .to_string());
+        .to_string();
+
+    debug!("Fetched engine hash: {}", hash);
+    return Ok(hash);
 }
 
 async fn install_engine(engine_dir: &PathBuf) -> Result<()> {
     if engine_dir.exists() {
+        debug!("Engine already cached at: {}", engine_dir.display());
         return Ok(());
     }
 
@@ -302,11 +339,13 @@ async fn install_engine(engine_dir: &PathBuf) -> Result<()> {
     }?;
 
     let engine_hash = engine_dir.file_name().unwrap().to_str().unwrap();
+    debug!("Installing engine {} for {}-{}", engine_hash, platform, arch);
 
     let url = format!(
         "https://storage.googleapis.com/flutter_infra_release/flutter/{}/dart-sdk-{}-{}.zip",
         engine_hash, platform, arch
     );
+    debug!("Downloading engine from: {}", url);
 
     let response = reqwest::get(&url)
         .await
@@ -314,14 +353,17 @@ async fn install_engine(engine_dir: &PathBuf) -> Result<()> {
         .error_for_status()
         .context("Failed to fetch engine zip")?;
 
+    debug!("Downloading engine zip archive");
     let bytes = response
         .bytes()
         .await
         .context("Failed to read engine zip")?;
 
+    debug!("Extracting engine archive ({} bytes)", bytes.len());
     let cursor = Cursor::new(bytes);
     let mut archive = ZipArchive::new(cursor)?;
 
+    debug!("Creating engine directory: {}", engine_dir.display());
     fs::create_dir_all(engine_dir)
         .await
         .context("Failed to create engine dir")?;
@@ -359,51 +401,66 @@ async fn install_engine(engine_dir: &PathBuf) -> Result<()> {
         }
     }
 
+    debug!("Successfully installed engine to: {}", engine_dir.display());
     return Ok(());
 }
 
 async fn install_flutter(version_dir: &PathBuf) -> Result<()> {
     let url = "https://github.com/flutter/flutter.git";
     let shared_dir = utils::shared_flutter_dir()?;
+    debug!("Setting up Flutter repository from: {}", url);
 
     let repo = ensure_shared_repo(url, &shared_dir).await?;
 
     let parent_dir = version_dir.parent().unwrap();
+    debug!("Creating parent directory: {}", parent_dir.display());
     fs::create_dir_all(parent_dir).await?;
 
-    let version_dir = version_dir.clone();
+    let version = version_dir.file_name().unwrap().to_str().unwrap().to_string();
+    debug!("Creating git worktree for version: {}", version);
+    debug!("Worktree will be created at: {}", version_dir.display());
+
+    let version_dir_clone = version_dir.clone();
 
     task::spawn_blocking(move || {
-        let version = version_dir.file_name().unwrap().to_str().unwrap();
+        let worktree_name = format!("fvm-{}", version);
+        debug!("Creating worktree: {}", worktree_name);
 
         let worktree = repo
-            .worktree(&format!("fvm-{}", version), &version_dir, None)
+            .worktree(&worktree_name, &version_dir_clone, None)
             .context("Failed to create worktree")?;
 
+        debug!("Opening worktree repository at: {}", worktree.path().display());
         let worktree_repo =
             Repository::open(worktree.path()).context("Failed to open worktree repository")?;
 
         let commit_ref = format!("refs/tags/{}", version);
+        debug!("Checking out tag: {}", commit_ref);
 
         let commit = worktree_repo
             .find_reference(&commit_ref)?
             .peel_to_commit()?;
 
+        debug!("Checking out commit: {}", commit.id());
         worktree_repo.checkout_tree(commit.as_object(), None)?;
         worktree_repo.set_head_detached(commit.id())?;
 
+        debug!("Successfully checked out Flutter version: {}", version);
         return Ok::<_, anyhow::Error>(());
     })
     .await??;
 
+    debug!("Successfully set up Flutter at: {}", version_dir.display());
     return Ok(());
 }
 
 async fn ensure_shared_repo(url: &str, path: &PathBuf) -> Result<git2::Repository> {
     if path.exists() {
+        debug!("Shared repository already exists at: {}", path.display());
         let repo_result = Repository::open_bare(path.clone());
         if let Ok(repo) = repo_result {
             {
+                debug!("Fetching updates from remote: {}", url);
                 let mut remote = repo.find_remote("origin").context("Failed to get remote")?;
 
                 let mut fetch_options = FetchOptions::new();
@@ -416,33 +473,41 @@ async fn ensure_shared_repo(url: &str, path: &PathBuf) -> Result<git2::Repositor
                         None,
                     )
                     .context("Failed to fetch remote")?;
+
+                debug!("Successfully fetched updates from remote");
             }
 
             return Ok(repo);
         } else {
+            warn!("Corrupted repository found at {}, cleaning up", path.display());
             fs::remove_dir_all(path.clone())
                 .await
                 .with_context(|| format!("Failed to clean up corrupted dir at {:?}", path))?;
         }
     }
 
+    debug!("Cloning shared bare repository from: {}", url);
+    debug!("Clone destination: {}", path.display());
+
     let url = url.to_string();
-    let path = path.clone();
+    let path_clone = path.clone();
 
     let repo = tokio::task::spawn_blocking(move || {
         let repo = RepoBuilder::new()
             .bare(true)
-            .clone(&url, &path)
+            .clone(&url, &path_clone)
             .context("Failed to clone repository");
         return repo;
     })
     .await??;
 
+    debug!("Successfully cloned shared repository to: {}", path.display());
     return Ok(repo);
 }
 
 async fn link_engine_to_flutter(engine_dir: &PathBuf, flutter_dir: &PathBuf) -> Result<()> {
     let cache_dir = flutter_dir.join("bin").join("cache");
+    debug!("Creating cache directory: {}", cache_dir.display());
     fs::create_dir_all(&cache_dir).await?;
 
     // Get the engine hash from the engine directory name
@@ -451,6 +516,7 @@ async fn link_engine_to_flutter(engine_dir: &PathBuf, flutter_dir: &PathBuf) -> 
         .and_then(|s| s.to_str())
         .context("Invalid engine directory name")?;
 
+    debug!("Creating engine marker files for hash: {}", engine_hash);
     // Create the three marker files that Flutter expects
     fs::write(cache_dir.join("engine.stamp"), engine_hash).await?;
     fs::write(cache_dir.join("engine-dart-sdk.stamp"), engine_hash).await?;
@@ -459,6 +525,7 @@ async fn link_engine_to_flutter(engine_dir: &PathBuf, flutter_dir: &PathBuf) -> 
     // Symlink the entire engine directory as dart-sdk
     // The engine_dir contains bin/, lib/, etc. directly after extraction
     let dart_sdk_link = cache_dir.join("dart-sdk");
+    debug!("Creating symlink: {} -> {}", dart_sdk_link.display(), engine_dir.display());
 
     #[cfg(unix)]
     {
@@ -472,5 +539,6 @@ async fn link_engine_to_flutter(engine_dir: &PathBuf, flutter_dir: &PathBuf) -> 
         symlink_dir(engine_dir, &dart_sdk_link)?;
     }
 
+    debug!("Successfully linked engine to Flutter installation");
     Ok(())
 }

@@ -3,6 +3,7 @@ use clap::Args;
 use serde::{Deserialize, Serialize};
 use std::env;
 use tokio::fs;
+use tracing::info;
 
 use crate::sdk_manager;
 
@@ -18,6 +19,8 @@ struct FvmConfig {
 }
 
 pub async fn run(args: UseArgs) -> Result<()> {
+    info!("Switching project to Flutter SDK version: {}", args.version);
+
     // Ensure the version is installed first
     sdk_manager::ensure_installed(&args.version).await?;
 
@@ -25,6 +28,8 @@ pub async fn run(args: UseArgs) -> Result<()> {
     let current_dir = env::current_dir().context("Failed to get current directory")?;
     let fvm_dir = current_dir.join(".fvm");
     let config_path = fvm_dir.join("fvm_config.json");
+
+    info!("Creating FVM configuration in: {}", fvm_dir.display());
 
     // Create .fvm directory if it doesn't exist
     fs::create_dir_all(&fvm_dir)
@@ -46,6 +51,7 @@ pub async fn run(args: UseArgs) -> Result<()> {
 
     println!("Project now uses Flutter SDK version: {}", args.version);
     println!("Config saved to: {}", config_path.display());
+    info!("Successfully configured project to use Flutter SDK {}", args.version);
 
     Ok(())
 }

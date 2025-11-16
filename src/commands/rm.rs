@@ -2,6 +2,7 @@ use crate::sdk_manager;
 use anyhow::{Result, bail};
 use clap::Args;
 use std::io::{self, Write};
+use tracing::info;
 
 #[derive(Debug, Clone, Args)]
 pub struct RmArgs {
@@ -30,6 +31,8 @@ pub async fn run(args: RmArgs) -> Result<()> {
 
     // Handle --all flag
     if args.all {
+        info!("Removing all installed Flutter versions");
+
         // Get confirmation from user
         print!("Are you sure you want to remove all installed Flutter versions? (y/N): ");
         io::stdout().flush()?;
@@ -39,6 +42,7 @@ pub async fn run(args: RmArgs) -> Result<()> {
 
         if !input.trim().eq_ignore_ascii_case("y") && !input.trim().eq_ignore_ascii_case("yes") {
             println!("Cancelled.");
+            info!("Removal cancelled by user");
             return Ok(());
         }
 
@@ -46,9 +50,11 @@ pub async fn run(args: RmArgs) -> Result<()> {
 
         if versions.is_empty() {
             println!("No Flutter versions installed.");
+            info!("No versions to remove");
             return Ok(());
         }
 
+        info!("Removing {} version(s)", versions.len());
         println!("Removing {} version(s)...", versions.len());
 
         for version in versions {
@@ -68,6 +74,7 @@ pub async fn run(args: RmArgs) -> Result<()> {
 
         // Clean up engines unless skipped
         if !args.skip_engine_cleanup {
+            info!("Starting engine cleanup");
             println!("\nCleaning up unused engines...");
             match sdk_manager::cleanup_unused_engines().await {
                 Ok(result) => {
@@ -93,6 +100,7 @@ pub async fn run(args: RmArgs) -> Result<()> {
 
     // Handle single version removal
     let version = args.version.as_ref().unwrap();
+    info!("Removing Flutter version: {}", version);
 
     // Check if version exists
     let installed = sdk_manager::list_installed_versions().await?;
@@ -108,6 +116,7 @@ pub async fn run(args: RmArgs) -> Result<()> {
 
             // Clean up engines unless skipped
             if !args.skip_engine_cleanup {
+                info!("Starting engine cleanup after version removal");
                 println!("Checking for unused engines...");
                 match sdk_manager::cleanup_unused_engines().await {
                     Ok(result) => {
