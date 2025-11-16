@@ -20,9 +20,13 @@ The goal is feature parity with the original FVM (located in `fvm/` directory) w
 ~/.fvm-rs/
 ├── shared/
 │   ├── flutter/        # Bare git repo shared across all versions
-│   └── engine/         # Engine cache (currently unused, future optimization)
-├── flutter/{version}/  # Per-version installations (git worktrees)
-└── engine/{hash}/      # Dart SDK engines by hash
+│   └── engine/{hash}/  # Shared Dart SDK engines by hash (deduplication)
+└── flutter/{version}/  # Per-version installations (git worktrees)
+    └── bin/cache/
+        ├── dart-sdk -> symlink to shared/engine/{hash}/
+        ├── engine.stamp
+        ├── engine-dart-sdk.stamp
+        └── engine.realm
 ```
 
 ### Key Optimization: Git Worktrees
@@ -35,7 +39,12 @@ Unlike FVM which clones Flutter separately for each version, fvm-rs:
 
 ### Engine Deduplication
 
-Dart SDK engines are downloaded once per hash and symlinked into each Flutter installation's `bin/cache/` directory. Multiple Flutter versions often share the same engine, avoiding redundant downloads.
+Dart SDK engines are downloaded once per hash to `~/.fvm-rs/shared/engine/{hash}/` and symlinked into each Flutter installation's `bin/cache/dart-sdk` directory. Multiple Flutter versions often share the same engine hash, avoiding redundant downloads.
+
+**Critical implementation details:**
+- Engines are symlinked as `flutter/bin/cache/dart-sdk` (entire directory symlink, not individual files)
+- Three marker files must be created in `bin/cache/`: `engine.stamp`, `engine-dart-sdk.stamp`, `engine.realm`
+- These marker files prevent Flutter from attempting to re-download the engine
 
 ### Parallel Operations
 
@@ -97,27 +106,33 @@ To maintain FVM compatibility:
 ## Current Implementation Status
 
 ### Implemented Commands
-- `use <version>` - Install a Flutter version (missing: persist to config)
+- `install <version>` - Downloads and caches a Flutter SDK version
+- `use <version>` - Sets Flutter SDK version for current project (creates `.fvm/fvm_config.json`)
 - `ls` - List installed versions
 - `releases --channel <channel>` - Show available releases with pretty tables
 - `rm <version>` - Remove installed version
 
+### Engine Linking - FIXED ✓
+The engine linking now works correctly:
+- Engines are cached in `~/.fvm-rs/shared/engine/{hash}/` (deduplication enabled)
+- Proper symlink structure: `flutter/bin/cache/dart-sdk -> shared/engine/{hash}/`
+- Marker files created: `engine.stamp`, `engine-dart-sdk.stamp`, `engine.realm`
+- Flutter no longer attempts to re-download the engine
+
 ### Missing for FVM Parity
-- Project-level configuration (`.fvm/fvm_config.json`)
 - Global version setting and persistence
-- `install` command (currently `use` does installation)
 - `flutter` and `dart` passthrough commands
 - `exec` command for running commands in FVM context
 - `doctor` command
-- `config` command
+- `config` command for global settings
 - Flavor support (project variants)
 - Fork/custom Flutter repository support
+- `--skip-pub-get` and `--skip-setup` flags for `use` command
 
 ### Known TODOs
-- `config_manager.rs` is a stub (line 1 in that file)
-- `use` command doesn't persist selection (see `commands/use.rs:18`)
-- No project detection/configuration yet
-- Engine caching in `shared/engine/` directory is created but not used (optimization opportunity)
+- `config_manager.rs` is mostly a stub
+- No global version configuration yet
+- `use` command should optionally run `flutter pub get`
 
 ## Reference Implementation
 

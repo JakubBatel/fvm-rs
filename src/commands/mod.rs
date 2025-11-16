@@ -1,3 +1,4 @@
+pub mod install;
 pub mod ls;
 pub mod releases;
 pub mod rm;

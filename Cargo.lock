@@ -557,6 +557,7 @@ dependencies = [
  "git2",
  "reqwest",
  "serde",
+ "serde_json",
  "sys-info",
  "tabled",
  "tokio",

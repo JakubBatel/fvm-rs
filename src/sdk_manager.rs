@@ -7,11 +7,6 @@ use std::{collections::HashSet, io::Cursor, path::PathBuf};
 use tokio::{fs, task};
 use zip::ZipArchive;
 
-#[cfg(target_family = "windows")]
-use std::os::windows::fs as platform_fs;
-
-#[cfg(not(target_family = "windows"))]
-use std::os::unix::fs as platform_fs;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct FlutterRelease {
@@ -152,7 +147,7 @@ async fn install(version: &str) -> Result<()> {
 
     println!("Resolved engine hash: {}", engine_hash);
 
-    let engine_dir = utils::engine_hash_dir(&engine_hash)?;
+    let engine_dir = utils::shared_engine_hash_dir(&engine_hash)?;
     let flutter_dir = utils::flutter_version_dir(version)?;
 
     let (engine_result, flutter_result) =
@@ -345,35 +340,34 @@ async fn ensure_shared_repo(url: &str, path: &PathBuf) -> Result<git2::Repositor
 }
 
 async fn link_engine_to_flutter(engine_dir: &PathBuf, flutter_dir: &PathBuf) -> Result<()> {
-    let target = flutter_dir.join("bin").join("cache");
+    let cache_dir = flutter_dir.join("bin").join("cache");
+    fs::create_dir_all(&cache_dir).await?;
 
-    fs::create_dir_all(&target).await?;
+    // Get the engine hash from the engine directory name
+    let engine_hash = engine_dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .context("Invalid engine directory name")?;
 
-    let mut engine_files = fs::read_dir(engine_dir).await?;
+    // Create the three marker files that Flutter expects
+    fs::write(cache_dir.join("engine.stamp"), engine_hash).await?;
+    fs::write(cache_dir.join("engine-dart-sdk.stamp"), engine_hash).await?;
+    fs::write(cache_dir.join("engine.realm"), "").await?;
 
-    while let Some(entry) = engine_files.next_entry().await? {
-        let src_path = entry.path();
-        let file_name = entry.file_name();
-        let dest_path = target.join(file_name);
+    // Symlink the entire engine directory as dart-sdk
+    // The engine_dir contains bin/, lib/, etc. directly after extraction
+    let dart_sdk_link = cache_dir.join("dart-sdk");
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::symlink;
-            symlink(&src_path, &dest_path)?;
-        }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        symlink(engine_dir, &dart_sdk_link)?;
+    }
 
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::{symlink_dir, symlink_file};
-
-            let file_type = entry.file_type().await?;
-
-            if file_type.is_dir() {
-                symlink_dir(&src_path, &dest_path)?;
-            } else {
-                symlink_file(&src_path, &dest_path)?;
-            }
-        }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::symlink_dir;
+        symlink_dir(engine_dir, &dart_sdk_link)?;
     }
 
     Ok(())

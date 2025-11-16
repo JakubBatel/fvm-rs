@@ -15,6 +15,8 @@ struct FvmArgs {
 #[derive(Subcommand, Debug, Clone)]
 enum Commands {
     /// Installs a Flutter SDK version
+    Install(commands::install::InstallArgs),
+    /// Sets Flutter SDK version for current project
     Use(commands::r#use::UseArgs),
     /// Lists installed Flutter SDK versions
     Ls,
@@ -30,6 +32,7 @@ async fn main() -> Result<(), anyhow::Error> {
     // cache::ensure_bare_cache(url, path)
 
     match args.cmd {
+        Commands::Install(args) => commands::install::run(args).await,
         Commands::Use(args) => commands::r#use::run(args).await,
         Commands::Ls => commands::ls::run().await,
         Commands::Releases(args) => commands::releases::run(args).await,
