@@ -3,7 +3,7 @@ use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use git2::{FetchOptions, Repository, build::RepoBuilder};
 use serde::Deserialize;
-use std::{collections::HashSet, io::Cursor, path::PathBuf};
+use std::{collections::HashSet, io::Cursor, path::PathBuf, sync::OnceLock};
 use tokio::{fs, task};
 use tracing::{debug, warn};
 use zip::ZipArchive;
@@ -40,6 +40,41 @@ struct CurrentReleasesResponse {
 struct FlutterReleasesResponse {
     current_release: CurrentReleasesResponse,
     releases: Vec<FlutterRelease>,
+}
+
+// In-memory cache for releases data (compatible with FVM's approach)
+static RELEASES_CACHE: OnceLock<FlutterReleases> = OnceLock::new();
+
+/// Get the channel for a given Flutter version
+/// Returns the channel name (stable, beta, dev, master) or defaults to "master" if not found
+pub async fn get_channel_for_version(version: &str) -> Result<String> {
+    debug!("Determining channel for version: {}", version);
+
+    // Get or fetch releases
+    let releases = match RELEASES_CACHE.get() {
+        Some(cached) => {
+            debug!("Using cached releases data");
+            cached
+        }
+        None => {
+            debug!("Fetching releases data (not cached yet)");
+            let fetched = list_available_versions().await?;
+            // Try to cache it, but if another thread beat us to it, use theirs
+            RELEASES_CACHE.get_or_init(|| fetched)
+        }
+    };
+
+    // Look up the version in the releases
+    for release in &releases.releases {
+        if release.version == version {
+            debug!("Found version {} in channel: {}", version, release.channel);
+            return Ok(release.channel.clone());
+        }
+    }
+
+    // Default to "master" if not found (FVM compatibility - handles custom versions)
+    warn!("Version {} not found in releases, defaulting to 'master' channel", version);
+    Ok("master".to_string())
 }
 
 pub async fn ensure_installed(version: &str) -> Result<()> {
@@ -285,9 +320,13 @@ async fn install(version: &str) -> Result<()> {
     debug!("Engine directory: {}", engine_dir.display());
     debug!("Flutter directory: {}", flutter_dir.display());
 
+    // Get the channel for this version before installation
+    let channel = get_channel_for_version(version).await?;
+    debug!("Version {} belongs to channel: {}", version, channel);
+
     debug!("Installing engine and Flutter in parallel");
     let (engine_result, flutter_result) =
-        tokio::join!(install_engine(&engine_dir), install_flutter(&flutter_dir),);
+        tokio::join!(install_engine(&engine_dir), install_flutter(&flutter_dir, version, &channel),);
 
     engine_result?;
     flutter_result?;
@@ -405,7 +444,7 @@ async fn install_engine(engine_dir: &PathBuf) -> Result<()> {
     return Ok(());
 }
 
-async fn install_flutter(version_dir: &PathBuf) -> Result<()> {
+async fn install_flutter(version_dir: &PathBuf, version: &str, channel: &str) -> Result<()> {
     let url = "https://github.com/flutter/flutter.git";
     let shared_dir = utils::shared_flutter_dir()?;
     debug!("Setting up Flutter repository from: {}", url);
@@ -416,36 +455,60 @@ async fn install_flutter(version_dir: &PathBuf) -> Result<()> {
     debug!("Creating parent directory: {}", parent_dir.display());
     fs::create_dir_all(parent_dir).await?;
 
-    let version = version_dir.file_name().unwrap().to_str().unwrap().to_string();
-    debug!("Creating git worktree for version: {}", version);
+    debug!("Creating git worktree for version: {} (channel: {})", version, channel);
     debug!("Worktree will be created at: {}", version_dir.display());
 
     let version_dir_clone = version_dir.clone();
+    let version_string = version.to_string();
+    let channel_string = channel.to_string();
 
     task::spawn_blocking(move || {
-        let worktree_name = format!("fvm-{}", version);
-        debug!("Creating worktree: {}", worktree_name);
+        let worktree_name = format!("fvm-{}", version_string);
+        debug!("Creating worktree '{}' using channel branch '{}'", worktree_name, channel_string);
+
+        // Find the channel branch reference (e.g., "refs/heads/stable")
+        let branch_ref_name = format!("refs/heads/{}", channel_string);
+        debug!("Finding channel branch reference: {}", branch_ref_name);
+        let branch_ref = repo.find_reference(&branch_ref_name)
+            .context("Failed to find channel branch")?;
+
+        // Create the worktree using the channel branch
+        // This makes Flutter doctor recognize the correct channel
+        let mut opts = git2::WorktreeAddOptions::new();
+        opts.reference(Some(&branch_ref));
 
         let worktree = repo
-            .worktree(&worktree_name, &version_dir_clone, None)
+            .worktree(&worktree_name, &version_dir_clone, Some(&opts))
             .context("Failed to create worktree")?;
 
         debug!("Opening worktree repository at: {}", worktree.path().display());
         let worktree_repo =
             Repository::open(worktree.path()).context("Failed to open worktree repository")?;
 
-        let commit_ref = format!("refs/tags/{}", version);
-        debug!("Checking out tag: {}", commit_ref);
+        // Find the specific version tag
+        let commit_ref = format!("refs/tags/{}", version_string);
+        debug!("Finding version tag: {}", commit_ref);
 
         let commit = worktree_repo
             .find_reference(&commit_ref)?
             .peel_to_commit()?;
 
-        debug!("Checking out commit: {}", commit.id());
-        worktree_repo.checkout_tree(commit.as_object(), None)?;
-        worktree_repo.set_head_detached(commit.id())?;
+        // Reset to the specific version while staying on the channel branch
+        debug!("Resetting {} branch to commit {} (version {})", channel_string, commit.id(), version_string);
+        worktree_repo.reset(commit.as_object(), git2::ResetType::Hard, None)?;
 
-        debug!("Successfully checked out Flutter version: {}", version);
+        // Configure the branch to track origin/{channel}
+        let mut config = worktree_repo.config()?;
+        let branch_remote_key = format!("branch.{}.remote", channel_string);
+        let branch_merge_key = format!("branch.{}.merge", channel_string);
+
+        debug!("Configuring branch '{}' to track 'origin/{}'", channel_string, channel_string);
+        config.set_str(&branch_remote_key, "origin")
+            .context("Failed to set branch remote")?;
+        config.set_str(&branch_merge_key, &format!("refs/heads/{}", channel_string))
+            .context("Failed to set branch merge")?;
+
+        debug!("Successfully set up Flutter version {} on channel {} with upstream tracking", version_string, channel_string);
         return Ok::<_, anyhow::Error>(());
     })
     .await??;
@@ -460,6 +523,11 @@ async fn ensure_shared_repo(url: &str, path: &PathBuf) -> Result<git2::Repositor
         let repo_result = Repository::open_bare(path.clone());
         if let Ok(repo) = repo_result {
             {
+                // Ensure advice.detachedHead is disabled to suppress warnings
+                debug!("Configuring git advice.detachedHead=false");
+                let mut config = repo.config()?;
+                config.set_bool("advice.detachedHead", false)?;
+
                 debug!("Fetching updates from remote: {}", url);
                 let mut remote = repo.find_remote("origin").context("Failed to get remote")?;
 
@@ -496,8 +564,14 @@ async fn ensure_shared_repo(url: &str, path: &PathBuf) -> Result<git2::Repositor
         let repo = RepoBuilder::new()
             .bare(true)
             .clone(&url, &path_clone)
-            .context("Failed to clone repository");
-        return repo;
+            .context("Failed to clone repository")?;
+
+        // Configure advice.detachedHead=false to suppress warnings
+        debug!("Configuring git advice.detachedHead=false");
+        let mut config = repo.config()?;
+        config.set_bool("advice.detachedHead", false)?;
+
+        Ok::<_, anyhow::Error>(repo)
     })
     .await??;
 
