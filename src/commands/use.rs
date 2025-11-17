@@ -1,21 +1,13 @@
 use anyhow::{Context, Result};
 use clap::Args;
-use serde::{Deserialize, Serialize};
 use std::env;
-use tokio::fs;
 use tracing::info;
 
-use crate::sdk_manager;
+use crate::{config_manager, gitignore_manager, sdk_manager};
 
 #[derive(Debug, Clone, Args)]
 pub struct UseArgs {
     version: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct FvmConfig {
-    #[serde(rename = "flutterSdkVersion")]
-    flutter_sdk_version: String,
 }
 
 pub async fn run(args: UseArgs) -> Result<()> {
@@ -26,31 +18,21 @@ pub async fn run(args: UseArgs) -> Result<()> {
 
     // Get current directory
     let current_dir = env::current_dir().context("Failed to get current directory")?;
-    let fvm_dir = current_dir.join(".fvm");
-    let config_path = fvm_dir.join("fvm_config.json");
 
-    info!("Creating FVM configuration in: {}", fvm_dir.display());
+    info!("Creating FVM configuration in: {}", current_dir.display());
 
-    // Create .fvm directory if it doesn't exist
-    fs::create_dir_all(&fvm_dir)
+    // Write both .fvmrc and .fvm/fvm_config.json
+    config_manager::write_project_config(&current_dir, &args.version)
         .await
-        .context("Failed to create .fvm directory")?;
+        .context("Failed to write project configuration")?;
 
-    // Create the config object
-    let config = FvmConfig {
-        flutter_sdk_version: args.version.clone(),
-    };
-
-    // Write the config file
-    let config_json = serde_json::to_string_pretty(&config)
-        .context("Failed to serialize config")?;
-
-    fs::write(&config_path, config_json)
+    // Update .fvm/.gitignore to ignore flutter_sdk symlink
+    gitignore_manager::update_fvm_gitignore(&current_dir)
         .await
-        .context("Failed to write fvm_config.json")?;
+        .context("Failed to update .fvm/.gitignore")?;
 
-    println!("Project now uses Flutter SDK version: {}", args.version);
-    println!("Config saved to: {}", config_path.display());
+    println!("✓ Project now uses Flutter SDK version: {}", args.version);
+    println!("  Config saved to .fvmrc and .fvm/fvm_config.json");
     info!("Successfully configured project to use Flutter SDK {}", args.version);
 
     Ok(())

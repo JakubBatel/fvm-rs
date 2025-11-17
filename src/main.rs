@@ -5,6 +5,7 @@ use tracing_subscriber::EnvFilter;
 
 mod commands;
 mod config_manager;
+mod gitignore_manager;
 mod sdk_manager;
 mod utils;
 
