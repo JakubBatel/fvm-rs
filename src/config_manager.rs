@@ -141,6 +141,101 @@ pub async fn get_project_flutter_version() -> Result<Option<String>> {
     }
 }
 
+/// Get the global Flutter version with smart fallback
+///
+/// Priority:
+/// 1. ~/.fvm-rs/default (fvm-rs global version, takes precedence)
+/// 2. ~/.fvm/default (original FVM global version, for compatibility)
+///
+/// Returns the version name if a global version is configured.
+pub async fn get_global_flutter_version() -> Result<Option<String>> {
+    // Get home directory
+    let home = dirs::home_dir()
+        .context("Failed to get home directory")?;
+
+    // Check ~/.fvm-rs/default first (takes precedence)
+    let fvm_rs_default = home.join(".fvm-rs/default");
+    if let Ok(target) = tokio::fs::read_link(&fvm_rs_default).await {
+        debug!("Found global version at: {}", fvm_rs_default.display());
+
+        // Extract version name from symlink target
+        // Target format: ~/.fvm-rs/flutter/{version}
+        if let Some(version) = target.file_name() {
+            let version_str = version.to_string_lossy().to_string();
+            debug!("Global version (fvm-rs): {}", version_str);
+            return Ok(Some(version_str));
+        }
+    }
+
+    // Fall back to ~/.fvm/default (for compatibility with original FVM)
+    let fvm_default = home.join(".fvm/default");
+    if let Ok(target) = tokio::fs::read_link(&fvm_default).await {
+        debug!("Found global version at: {}", fvm_default.display());
+
+        // Extract version name from symlink target
+        // Target format: ~/.fvm/versions/{version}
+        if let Some(version) = target.file_name() {
+            let version_str = version.to_string_lossy().to_string();
+            debug!("Global version (fvm fallback): {}", version_str);
+            return Ok(Some(version_str));
+        }
+    }
+
+    debug!("No global version configured");
+    Ok(None)
+}
+
+/// Check if a version string is a channel (stable, beta, master) vs a release (3.24.0)
+///
+/// Returns true for channels, false for release versions.
+pub fn is_channel(version: &str) -> bool {
+    matches!(version, "stable" | "beta" | "master" | "dev")
+}
+
+/// Check if the user is trying to run `flutter upgrade` and protect against it
+///
+/// This prevents users from accidentally upgrading a pinned release version,
+/// which would be meaningless. Only channel versions (stable, beta, master) can be upgraded.
+///
+/// Returns an error if upgrade is attempted on a non-channel version.
+pub async fn check_flutter_upgrade(args: &[String]) -> Result<()> {
+    // Only check if first argument is "upgrade"
+    if args.is_empty() || args[0] != "upgrade" {
+        return Ok(());
+    }
+
+    debug!("Detected 'flutter upgrade' command, checking version type");
+
+    // Get the current version (project has priority, then global)
+    let version = get_project_flutter_version().await?
+        .or_else(|| {
+            // Use blocking task for async function in sync context
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(get_global_flutter_version())
+                    .ok()
+                    .flatten()
+            })
+        });
+
+    if let Some(version_name) = version {
+        debug!("Current version: {}", version_name);
+
+        // Only allow upgrade for channel versions
+        if !is_channel(&version_name) {
+            anyhow::bail!(
+                "You should not upgrade a release version. \
+                Please install a channel (stable, beta, master) instead to upgrade it."
+            );
+        }
+
+        debug!("Version is a channel, upgrade allowed");
+    } else {
+        debug!("No version configured, allowing system Flutter upgrade");
+    }
+
+    Ok(())
+}
+
 /// Find the project root by walking up the directory tree looking for FVM config
 ///
 /// Returns the directory containing .fvmrc or .fvm/fvm_config.json, or None if not found.
