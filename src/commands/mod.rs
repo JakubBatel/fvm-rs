@@ -1,5 +1,6 @@
 pub mod config;
 pub mod dart;
+pub mod doctor;
 pub mod flutter;
 pub mod global;
 pub mod install;

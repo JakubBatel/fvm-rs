@@ -19,4 +19,5 @@ tabled = { version = "0.20.0", features = ["ansi"] }
 tokio = { version = "1.46.0", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+which = "7.0.0"
 zip = "4.2.0"
