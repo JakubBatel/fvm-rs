@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 use tracing::debug;
 
+use crate::utils;
+
 /// Main project configuration format (.fvmrc)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectConfig {
@@ -263,5 +265,169 @@ pub async fn find_project_root() -> Result<Option<PathBuf>> {
             debug!("No FVM config found in directory tree");
             return Ok(None);
         }
+    }
+}
+
+/// Global configuration for fvm-rs
+///
+/// Stored in ~/.fvm-rs/.fvmrc on all platforms
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalConfig {
+    /// Custom path where fvm-rs will cache Flutter versions
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_path: Option<String>,
+
+    /// Enable/disable git cache for faster version installs
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub use_git_cache: Option<bool>,
+
+    /// Path where local Git reference cache is stored
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_cache_path: Option<String>,
+
+    /// Flutter repository Git URL to clone from
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flutter_url: Option<String>,
+
+    /// Disable automatic update checking for fvm-rs
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disable_update_check: Option<bool>,
+}
+
+impl GlobalConfig {
+    /// Read global config from disk
+    ///
+    /// Returns default config if file doesn't exist.
+    pub async fn read() -> Result<Self> {
+        let config_path = utils::get_global_config_path()?;
+
+        if !config_path.exists() {
+            debug!("No global config found, using defaults");
+            return Ok(Self::default());
+        }
+
+        debug!("Reading global config from: {}", config_path.display());
+        let contents = fs::read_to_string(&config_path)
+            .await
+            .context("Failed to read global config")?;
+
+        let config: GlobalConfig = serde_json::from_str(&contents)
+            .context("Failed to parse global config")?;
+
+        Ok(config)
+    }
+
+    /// Save global config to disk
+    pub async fn save(&self) -> Result<()> {
+        let config_path = utils::get_global_config_path()?;
+
+        // Create parent directory if needed
+        if let Some(parent) = config_path.parent() {
+            if !parent.exists() {
+                debug!("Creating config directory: {}", parent.display());
+                fs::create_dir_all(parent)
+                    .await
+                    .context("Failed to create config directory")?;
+            }
+        }
+
+        let json = serde_json::to_string_pretty(self)
+            .context("Failed to serialize global config")?;
+
+        debug!("Writing global config to: {}", config_path.display());
+        fs::write(&config_path, json)
+            .await
+            .context("Failed to write global config")?;
+
+        Ok(())
+    }
+
+    /// Get cache path with fallback to env var and default
+    pub fn get_cache_path(&self) -> Result<PathBuf> {
+        // Priority: config file -> FVM_CACHE_PATH env -> FVM_HOME env -> default
+        if let Some(path) = &self.cache_path {
+            return Ok(PathBuf::from(path));
+        }
+
+        if let Ok(path) = std::env::var("FVM_CACHE_PATH") {
+            debug!("Using cache path from FVM_CACHE_PATH: {}", path);
+            return Ok(PathBuf::from(path));
+        }
+
+        if let Ok(path) = std::env::var("FVM_HOME") {
+            debug!("Using cache path from FVM_HOME (legacy): {}", path);
+            return Ok(PathBuf::from(path));
+        }
+
+        // Default: ~/.fvm-rs
+        utils::get_fvm_dir()
+    }
+
+    /// Get git cache enabled status with fallback to env var and default
+    pub fn get_use_git_cache(&self) -> bool {
+        // Priority: config file -> FVM_USE_GIT_CACHE env -> default (true)
+        if let Some(value) = self.use_git_cache {
+            return value;
+        }
+
+        if let Ok(value) = std::env::var("FVM_USE_GIT_CACHE") {
+            return value.to_lowercase() == "true" || value == "1";
+        }
+
+        true // Default: enabled
+    }
+
+    /// Get git cache path with fallback to env var and default
+    pub fn get_git_cache_path(&self) -> Result<PathBuf> {
+        // Priority: config file -> FVM_GIT_CACHE_PATH env -> default (cache_path/shared/flutter)
+        if let Some(path) = &self.git_cache_path {
+            return Ok(PathBuf::from(path));
+        }
+
+        if let Ok(path) = std::env::var("FVM_GIT_CACHE_PATH") {
+            debug!("Using git cache path from FVM_GIT_CACHE_PATH: {}", path);
+            return Ok(PathBuf::from(path));
+        }
+
+        // Default: {cache_path}/shared/flutter
+        let cache_path = self.get_cache_path()?;
+        Ok(cache_path.join("shared/flutter"))
+    }
+
+    /// Get Flutter repository URL with fallback to env var and default
+    pub fn get_flutter_url(&self) -> String {
+        // Priority: config file -> FVM_FLUTTER_URL/FLUTTER_GIT_URL env -> default
+        if let Some(url) = &self.flutter_url {
+            return url.clone();
+        }
+
+        if let Ok(url) = std::env::var("FVM_FLUTTER_URL") {
+            debug!("Using Flutter URL from FVM_FLUTTER_URL: {}", url);
+            return url;
+        }
+
+        if let Ok(url) = std::env::var("FLUTTER_GIT_URL") {
+            debug!("Using Flutter URL from FLUTTER_GIT_URL: {}", url);
+            return url;
+        }
+
+        "https://github.com/flutter/flutter.git".to_string()
+    }
+
+    /// Get update check enabled status
+    pub fn get_update_check_enabled(&self) -> bool {
+        // If disable_update_check is Some(true), return false (disabled)
+        // Otherwise return true (enabled by default)
+        !self.disable_update_check.unwrap_or(false)
+    }
+
+    /// Check if config is empty (all fields are None)
+    pub fn is_empty(&self) -> bool {
+        self.cache_path.is_none()
+            && self.use_git_cache.is_none()
+            && self.git_cache_path.is_none()
+            && self.flutter_url.is_none()
+            && self.disable_update_check.is_none()
     }
 }

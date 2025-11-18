@@ -616,3 +616,103 @@ async fn link_engine_to_flutter(engine_dir: &PathBuf, flutter_dir: &PathBuf) -> 
     debug!("Successfully linked engine to Flutter installation");
     Ok(())
 }
+
+/// Set a Flutter version as the global default
+///
+/// Creates a symlink at ~/.fvm-rs/default pointing to the specified version.
+/// The version must be installed first.
+pub async fn set_global_version(version: &str) -> Result<()> {
+    let flutter_version_dir = utils::flutter_version_dir(version)?;
+
+    // Verify the version is installed
+    if !flutter_version_dir.exists() {
+        anyhow::bail!(
+            "Flutter version {} is not installed. Run 'fvm-rs install {}' first.",
+            version,
+            version
+        );
+    }
+
+    let global_link = utils::get_global_link_path()?;
+
+    // Remove existing symlink if it exists
+    if global_link.exists() || global_link.symlink_metadata().is_ok() {
+        debug!("Removing existing global symlink: {}", global_link.display());
+        fs::remove_file(&global_link).await
+            .context("Failed to remove existing global symlink")?;
+    }
+
+    debug!("Creating global symlink: {} -> {}",
+           global_link.display(),
+           flutter_version_dir.display());
+
+    // Create the symlink
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        tokio::task::spawn_blocking(move || {
+            symlink(&flutter_version_dir, &global_link)
+        })
+        .await?
+        .context("Failed to create global symlink")?;
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::symlink_dir;
+        tokio::task::spawn_blocking(move || {
+            symlink_dir(&flutter_version_dir, &global_link)
+        })
+        .await?
+        .context("Failed to create global symlink")?;
+    }
+
+    debug!("Successfully set global version to: {}", version);
+    Ok(())
+}
+
+/// Unset the global Flutter version
+///
+/// Removes the symlink at ~/.fvm-rs/default.
+/// Returns Ok(false) if no global version was set, Ok(true) if it was removed.
+pub async fn unset_global_version() -> Result<bool> {
+    let global_link = utils::get_global_link_path()?;
+
+    // Check if symlink exists (using symlink_metadata to avoid following the link)
+    if global_link.symlink_metadata().is_ok() {
+        debug!("Removing global symlink: {}", global_link.display());
+        fs::remove_file(&global_link).await
+            .context("Failed to remove global symlink")?;
+
+        debug!("Successfully removed global version");
+        Ok(true)
+    } else {
+        debug!("No global symlink found at: {}", global_link.display());
+        Ok(false)
+    }
+}
+
+/// Get the currently set global version
+///
+/// Returns the version name if a global version is set, or None.
+pub async fn get_global_version() -> Result<Option<String>> {
+    let global_link = utils::get_global_link_path()?;
+
+    // Check if symlink exists
+    if let Ok(target) = fs::read_link(&global_link).await {
+        debug!("Found global version symlink: {} -> {}",
+               global_link.display(),
+               target.display());
+
+        // Extract version name from target path
+        // Target format: ~/.fvm-rs/flutter/{version}
+        if let Some(version) = target.file_name() {
+            let version_str = version.to_string_lossy().to_string();
+            debug!("Global version: {}", version_str);
+            return Ok(Some(version_str));
+        }
+    }
+
+    debug!("No global version configured");
+    Ok(None)
+}

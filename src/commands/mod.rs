@@ -1,5 +1,7 @@
+pub mod config;
 pub mod dart;
 pub mod flutter;
+pub mod global;
 pub mod install;
 pub mod ls;
 pub mod releases;

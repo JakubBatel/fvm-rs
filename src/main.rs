@@ -70,6 +70,10 @@ enum Commands {
     Releases(commands::releases::ReleasesArgs),
     /// Removes a Flutter SDK version
     Rm(commands::rm::RmArgs),
+    /// Manages global configuration settings
+    Config(commands::config::ConfigArgs),
+    /// Sets or displays the global Flutter SDK version
+    Global(commands::global::GlobalArgs),
     /// Runs Flutter commands using the project's configured SDK version
     Flutter(commands::flutter::FlutterArgs),
     /// Runs Dart commands using the project's configured Flutter SDK
@@ -95,6 +99,8 @@ async fn main() -> Result<(), anyhow::Error> {
         Commands::Ls => commands::ls::run().await,
         Commands::Releases(args) => commands::releases::run(args).await,
         Commands::Rm(args) => commands::rm::run(args).await,
+        Commands::Config(args) => commands::config::run(args).await,
+        Commands::Global(args) => commands::global::run(args).await,
         Commands::Flutter(args) => {
             let exit_code = commands::flutter::run(args).await?;
             std::process::exit(exit_code);

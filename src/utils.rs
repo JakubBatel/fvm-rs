@@ -10,6 +10,21 @@ pub fn fvm_rs_root_dir() -> Result<PathBuf> {
         .join(".fvm-rs"))
 }
 
+/// Alias for fvm_rs_root_dir() for consistency with config_manager
+pub fn get_fvm_dir() -> Result<PathBuf> {
+    fvm_rs_root_dir()
+}
+
+/// Get the path to the global configuration file (~/.fvm-rs/.fvmrc)
+pub fn get_global_config_path() -> Result<PathBuf> {
+    Ok(fvm_rs_root_dir()?.join(".fvmrc"))
+}
+
+/// Get the path to the global version symlink (~/.fvm-rs/default)
+pub fn get_global_link_path() -> Result<PathBuf> {
+    Ok(fvm_rs_root_dir()?.join("default"))
+}
+
 pub fn shared_dir() -> Result<PathBuf> {
     Ok(fvm_rs_root_dir()?.join("shared"))
 }
