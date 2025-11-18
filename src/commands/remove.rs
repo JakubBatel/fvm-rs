@@ -5,7 +5,7 @@ use std::io::{self, Write};
 use tracing::info;
 
 #[derive(Debug, Clone, Args)]
-pub struct RmArgs {
+pub struct RemoveArgs {
     /// Flutter version to remove (e.g., 3.24.0)
     #[arg(required_unless_present = "all")]
     version: Option<String>,
@@ -19,7 +19,7 @@ pub struct RmArgs {
     skip_engine_cleanup: bool,
 }
 
-pub async fn run(args: RmArgs) -> Result<()> {
+pub async fn run(args: RemoveArgs) -> Result<()> {
     // Validate arguments
     if !args.all && args.version.is_none() {
         bail!("Either specify a version or use --all flag");

@@ -65,11 +65,13 @@ enum Commands {
     /// Sets Flutter SDK version for current project
     Use(commands::r#use::UseArgs),
     /// Lists installed Flutter SDK versions
-    Ls,
+    #[command(alias = "ls")]
+    List,
     /// Shows available Flutter SDK releases
     Releases(commands::releases::ReleasesArgs),
     /// Removes a Flutter SDK version
-    Rm(commands::rm::RmArgs),
+    #[command(alias = "rm")]
+    Remove(commands::remove::RemoveArgs),
     /// Manages global configuration settings
     Config(commands::config::ConfigArgs),
     /// Sets or displays the global Flutter SDK version
@@ -96,9 +98,9 @@ async fn main() -> Result<(), anyhow::Error> {
     match args.cmd {
         Commands::Install(args) => commands::install::run(args).await,
         Commands::Use(args) => commands::r#use::run(args).await,
-        Commands::Ls => commands::ls::run().await,
+        Commands::List => commands::list::run().await,
         Commands::Releases(args) => commands::releases::run(args).await,
-        Commands::Rm(args) => commands::rm::run(args).await,
+        Commands::Remove(args) => commands::remove::run(args).await,
         Commands::Config(args) => commands::config::run(args).await,
         Commands::Global(args) => commands::global::run(args).await,
         Commands::Flutter(args) => {

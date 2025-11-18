@@ -254,8 +254,8 @@ cargo build --release
 ```bash
 cargo run -- releases --channel stable
 cargo run -- use 3.24.0
-cargo run -- ls
-cargo run -- rm 3.24.0
+cargo run -- list
+cargo run -- remove 3.24.0
 ```
 
 **Run tests:**
@@ -292,9 +292,13 @@ To maintain FVM compatibility:
 ### Implemented Commands
 - `install <version>` - Downloads and caches a Flutter SDK version
 - `use <version>` - Sets Flutter SDK version for current project (creates `.fvm/fvm_config.json`)
-- `ls` - List installed versions
+- `list` - List installed versions (alias: `ls`)
 - `releases --channel <channel>` - Show available releases with pretty tables
-- `rm <version>` - Remove installed version
+- `remove <version>` - Remove installed version (alias: `rm`)
+- `config` - Manages global configuration settings (cache path, git cache, Flutter URL, etc.)
+- `global [version]` - Sets or displays the global Flutter SDK version
+- `flutter [args...]` - Runs Flutter commands using the project's configured SDK version
+- `dart [args...]` - Runs Dart commands using the project's configured Flutter SDK
 
 ### Engine Linking - FIXED ✓
 The engine linking now works correctly:
@@ -304,19 +308,16 @@ The engine linking now works correctly:
 - Flutter no longer attempts to re-download the engine
 
 ### Missing for FVM Parity
-- Global version setting and persistence
-- `flutter` and `dart` passthrough commands
 - `exec` command for running commands in FVM context
 - `doctor` command
-- `config` command for global settings
+- `spawn` command for running commands with a specific version
+- `destroy` command to completely remove FVM cache
 - Flavor support (project variants)
-- Fork/custom Flutter repository support
+- Fork/custom Flutter repository support (add/remove/list subcommands)
 - `--skip-pub-get` and `--skip-setup` flags for `use` command
 
 ### Known TODOs
-- `config_manager.rs` is mostly a stub
-- No global version configuration yet
-- `use` command should optionally run `flutter pub get`
+- `use` command should optionally run `flutter pub get` (needs `--skip-pub-get` flag)
 
 ## Reference Implementation
 
