@@ -78,6 +78,8 @@ enum Commands {
     Global(commands::global::GlobalArgs),
     /// Shows FVM environment and project configuration
     Doctor(commands::doctor::DoctorArgs),
+    /// Executes Flutter commands using a specific project flavor
+    Flavor(commands::flavor::FlavorArgs),
     /// Runs Flutter commands using the project's configured SDK version
     Flutter(commands::flutter::FlutterArgs),
     /// Runs Dart commands using the project's configured Flutter SDK
@@ -106,6 +108,7 @@ async fn main() -> Result<(), anyhow::Error> {
         Commands::Config(args) => commands::config::run(args).await,
         Commands::Global(args) => commands::global::run(args).await,
         Commands::Doctor(args) => commands::doctor::run(args).await,
+        Commands::Flavor(args) => commands::flavor::run(args).await,
         Commands::Flutter(args) => {
             let exit_code = commands::flutter::run(args).await?;
             std::process::exit(exit_code);

@@ -54,6 +54,70 @@ impl ProjectConfig {
     }
 }
 
+/// Validate that a flavor name is not a channel name
+///
+/// Channel names (stable, beta, master, dev) cannot be used as flavor names
+/// to avoid confusion. Returns an error if the name is a channel.
+pub fn validate_flavor_name(flavor_name: &str) -> Result<()> {
+    if is_channel(flavor_name) {
+        anyhow::bail!(
+            "Cannot use channel name '{}' as a flavor name. \
+            Flavors must have unique names that are not channels (stable, beta, master, dev).",
+            flavor_name
+        );
+    }
+    Ok(())
+}
+
+/// Update project configuration with optional main version and flavor updates
+///
+/// This function intelligently merges updates with existing config:
+/// - If `main_version` is provided, updates the main `flutter` field
+/// - If `flavor` is provided, adds/updates that specific flavor (merges with existing flavors)
+/// - Preserves all existing config that isn't being updated
+///
+/// Writes to both .fvmrc and .fvm/fvm_config.json for FVM compatibility.
+pub async fn update_project_config(
+    project_root: &Path,
+    main_version: Option<&str>,
+    flavor: Option<(&str, &str)>, // (flavor_name, flavor_version)
+) -> Result<()> {
+    // Read existing config or start with empty
+    let mut config = read_project_config(project_root)
+        .await?
+        .unwrap_or_else(|| ProjectConfig::new(""));
+
+    // Update main version if provided
+    if let Some(version) = main_version {
+        debug!("Updating main Flutter version to: {}", version);
+        config.flutter = version.to_string();
+    }
+
+    // Update flavor if provided
+    if let Some((flavor_name, flavor_version)) = flavor {
+        debug!("Updating flavor '{}' to version: {}", flavor_name, flavor_version);
+
+        // Validate flavor name
+        validate_flavor_name(flavor_name)?;
+
+        // Get existing flavors or create new map
+        let mut flavors = config.flavors.take().unwrap_or_default();
+
+        // Add/update the flavor
+        flavors.insert(flavor_name.to_string(), flavor_version.to_string());
+
+        // Store back (only if not empty)
+        config.flavors = if flavors.is_empty() {
+            None
+        } else {
+            Some(flavors)
+        };
+    }
+
+    // Write both config files
+    write_config_files(project_root, &config).await
+}
+
 /// Write project configuration to both .fvmrc and .fvm/fvm_config.json
 ///
 /// This function writes two config files for FVM compatibility:
@@ -61,7 +125,11 @@ impl ProjectConfig {
 /// 2. .fvm/fvm_config.json (legacy format for backward compatibility)
 pub async fn write_project_config(project_root: &Path, version: &str) -> Result<()> {
     let config = ProjectConfig::new(version);
+    write_config_files(project_root, &config).await
+}
 
+/// Internal helper to write both config files
+async fn write_config_files(project_root: &Path, config: &ProjectConfig) -> Result<()> {
     // Write .fvmrc (primary format)
     let fvmrc_path = project_root.join(".fvmrc");
     let fvmrc_json = serde_json::to_string_pretty(&config)
