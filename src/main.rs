@@ -84,6 +84,12 @@ enum Commands {
     Flutter(commands::flutter::FlutterArgs),
     /// Runs Dart commands using the project's configured Flutter SDK
     Dart(commands::dart::DartArgs),
+    /// Executes arbitrary commands with project's configured SDK in PATH
+    Exec(commands::exec::ExecArgs),
+    /// Executes Flutter commands with a specific SDK version
+    Spawn(commands::spawn::SpawnArgs),
+    /// Completely removes the FVM cache directory and all cached versions
+    Destroy(commands::destroy::DestroyArgs),
 }
 
 #[tokio::main]
@@ -117,5 +123,14 @@ async fn main() -> Result<(), anyhow::Error> {
             let exit_code = commands::dart::run(args).await?;
             std::process::exit(exit_code);
         }
+        Commands::Exec(args) => {
+            let exit_code = commands::exec::run(args).await?;
+            std::process::exit(exit_code);
+        }
+        Commands::Spawn(args) => {
+            let exit_code = commands::spawn::run(args).await?;
+            std::process::exit(exit_code);
+        }
+        Commands::Destroy(args) => commands::destroy::run(args).await,
     }
 }

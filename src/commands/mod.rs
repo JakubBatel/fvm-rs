@@ -1,6 +1,8 @@
 pub mod config;
 pub mod dart;
+pub mod destroy;
 pub mod doctor;
+pub mod exec;
 pub mod flavor;
 pub mod flutter;
 pub mod global;
@@ -8,4 +10,5 @@ pub mod install;
 pub mod list;
 pub mod releases;
 pub mod remove;
+pub mod spawn;
 pub mod r#use;
