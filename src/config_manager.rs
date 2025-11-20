@@ -7,6 +7,15 @@ use tracing::debug;
 
 use crate::utils;
 
+/// Flutter fork configuration for custom Flutter repositories
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Fork {
+    /// Fork alias name (e.g., "mycompany")
+    pub name: String,
+    /// Git repository URL (e.g., "https://github.com/mycompany/flutter.git")
+    pub url: String,
+}
+
 /// Main project configuration format (.fvmrc)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectConfig {
@@ -361,6 +370,18 @@ pub struct GlobalConfig {
     /// Disable automatic update checking for fvm-rs
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disable_update_check: Option<bool>,
+
+    /// Auto-update VS Code settings with Flutter SDK path
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_vscode_settings: Option<bool>,
+
+    /// Auto-update project .gitignore with .fvm/ entry
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_gitignore: Option<bool>,
+
+    /// Custom Flutter repository forks
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forks: Option<Vec<Fork>>,
 }
 
 impl GlobalConfig {
@@ -497,5 +518,61 @@ impl GlobalConfig {
             && self.git_cache_path.is_none()
             && self.flutter_url.is_none()
             && self.disable_update_check.is_none()
+            && self.update_vscode_settings.is_none()
+            && self.update_gitignore.is_none()
+            && self.forks.is_none()
+    }
+
+    /// Add a new fork to the configuration
+    pub fn add_fork(&mut self, name: String, url: String) -> Result<()> {
+        // Check if fork already exists
+        if let Some(forks) = &self.forks {
+            if forks.iter().any(|f| f.name == name) {
+                anyhow::bail!("Fork '{}' already exists", name);
+            }
+        }
+
+        // Add the fork
+        let fork = Fork { name, url };
+        if let Some(forks) = &mut self.forks {
+            forks.push(fork);
+        } else {
+            self.forks = Some(vec![fork]);
+        }
+
+        Ok(())
+    }
+
+    /// Remove a fork from the configuration
+    pub fn remove_fork(&mut self, name: &str) -> Result<()> {
+        if let Some(forks) = &mut self.forks {
+            let initial_len = forks.len();
+            forks.retain(|f| f.name != name);
+
+            if forks.len() == initial_len {
+                anyhow::bail!("Fork '{}' not found", name);
+            }
+
+            // Clean up empty vec
+            if forks.is_empty() {
+                self.forks = None;
+            }
+
+            Ok(())
+        } else {
+            anyhow::bail!("Fork '{}' not found", name);
+        }
+    }
+
+    /// Get the URL for a fork by name
+    pub fn get_fork_url(&self, name: &str) -> Option<String> {
+        self.forks.as_ref()?.iter()
+            .find(|f| f.name == name)
+            .map(|f| f.url.clone())
+    }
+
+    /// List all configured forks
+    pub fn list_forks(&self) -> Vec<Fork> {
+        self.forks.clone().unwrap_or_default()
     }
 }

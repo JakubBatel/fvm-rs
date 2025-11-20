@@ -53,8 +53,7 @@ pub async fn update_fvm_gitignore(project_root: &Path) -> Result<()> {
 /// Update project root .gitignore to include .fvm directory
 ///
 /// This is optional and should only be called when the user has enabled
-/// the `updateGitIgnore` config option (not yet implemented).
-#[allow(dead_code)]
+/// the `updateGitIgnore` config option.
 pub async fn update_project_gitignore(project_root: &Path) -> Result<()> {
     let gitignore_path = project_root.join(".gitignore");
 

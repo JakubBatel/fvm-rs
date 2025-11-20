@@ -6,6 +6,7 @@ use tracing_subscriber::EnvFilter;
 mod commands;
 mod config_manager;
 mod gitignore_manager;
+mod ide_manager;
 mod sdk_manager;
 mod utils;
 
@@ -80,6 +81,10 @@ enum Commands {
     Doctor(commands::doctor::DoctorArgs),
     /// Executes Flutter commands using a specific project flavor
     Flavor(commands::flavor::FlavorArgs),
+    /// Manages Flutter fork aliases for custom repositories
+    Fork(commands::fork::ForkArgs),
+    /// Provides JSON API access to FVM data
+    Api(commands::api::ApiArgs),
     /// Runs Flutter commands using the project's configured SDK version
     Flutter(commands::flutter::FlutterArgs),
     /// Runs Dart commands using the project's configured Flutter SDK
@@ -115,6 +120,8 @@ async fn main() -> Result<(), anyhow::Error> {
         Commands::Global(args) => commands::global::run(args).await,
         Commands::Doctor(args) => commands::doctor::run(args).await,
         Commands::Flavor(args) => commands::flavor::run(args).await,
+        Commands::Fork(args) => commands::fork::run(args).await,
+        Commands::Api(args) => commands::api::run(args).await,
         Commands::Flutter(args) => {
             let exit_code = commands::flutter::run(args).await?;
             std::process::exit(exit_code);

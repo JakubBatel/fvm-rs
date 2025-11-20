@@ -1,3 +1,4 @@
+pub mod api;
 pub mod config;
 pub mod dart;
 pub mod destroy;
@@ -5,6 +6,7 @@ pub mod doctor;
 pub mod exec;
 pub mod flavor;
 pub mod flutter;
+pub mod fork;
 pub mod global;
 pub mod install;
 pub mod list;

@@ -1,15 +1,15 @@
-use crate::utils;
+use crate::{utils, config_manager};
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use git2::{FetchOptions, Repository, build::RepoBuilder};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, io::Cursor, path::PathBuf, sync::OnceLock};
 use tokio::{fs, task};
 use tracing::{debug, warn};
 use zip::ZipArchive;
 
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct FlutterRelease {
     pub hash: String,
     pub channel: String,
@@ -45,10 +45,63 @@ struct FlutterReleasesResponse {
 // In-memory cache for releases data (compatible with FVM's approach)
 static RELEASES_CACHE: OnceLock<FlutterReleases> = OnceLock::new();
 
+/// Parse a version string that may contain a fork alias (e.g., "mycompany/stable")
+///
+/// Returns (fork_alias, actual_version) if the version contains a fork alias,
+/// or (None, version) if it's a regular version string.
+fn parse_fork_syntax(version: &str) -> (Option<String>, String) {
+    if let Some((alias, ver)) = version.split_once('/') {
+        debug!("Parsed fork syntax: alias='{}', version='{}'", alias, ver);
+        (Some(alias.to_string()), ver.to_string())
+    } else {
+        (None, version.to_string())
+    }
+}
+
+/// Get the Flutter repository URL for a given version
+///
+/// If the version contains a fork alias (e.g., "mycompany/stable"),
+/// looks up the fork URL from global config. Otherwise returns the default URL.
+async fn get_flutter_repo_url(version: &str) -> Result<String> {
+    let (fork_alias, _actual_version) = parse_fork_syntax(version);
+
+    if let Some(alias) = fork_alias {
+        debug!("Looking up fork URL for alias: {}", alias);
+        let config = config_manager::GlobalConfig::read().await?;
+
+        if let Some(url) = config.get_fork_url(&alias) {
+            debug!("Found fork URL for '{}': {}", alias, url);
+            Ok(url)
+        } else {
+            anyhow::bail!(
+                "Fork '{}' not found. Add it with: fvm-rs fork add {} <git-url>",
+                alias,
+                alias
+            );
+        }
+    } else {
+        // Use default URL from config or fallback
+        let config = config_manager::GlobalConfig::read().await?;
+        Ok(config.get_flutter_url())
+    }
+}
+
+/// Get the actual version string without fork alias
+///
+/// For "mycompany/stable" returns "stable"
+/// For "3.24.0" returns "3.24.0"
+fn strip_fork_alias(version: &str) -> String {
+    parse_fork_syntax(version).1
+}
+
 /// Get the channel for a given Flutter version
 /// Returns the channel name (stable, beta, dev, master) or defaults to "master" if not found
 pub async fn get_channel_for_version(version: &str) -> Result<String> {
     debug!("Determining channel for version: {}", version);
+
+    // Strip fork alias if present (e.g., "mycompany/stable" -> "stable")
+    let actual_version = strip_fork_alias(version);
+    debug!("Actual version (without fork alias): {}", actual_version);
 
     // Get or fetch releases
     let releases = match RELEASES_CACHE.get() {
@@ -66,14 +119,14 @@ pub async fn get_channel_for_version(version: &str) -> Result<String> {
 
     // Look up the version in the releases
     for release in &releases.releases {
-        if release.version == version {
-            debug!("Found version {} in channel: {}", version, release.channel);
+        if release.version == actual_version {
+            debug!("Found version {} in channel: {}", actual_version, release.channel);
             return Ok(release.channel.clone());
         }
     }
 
     // Default to "master" if not found (FVM compatibility - handles custom versions)
-    warn!("Version {} not found in releases, defaulting to 'master' channel", version);
+    warn!("Version {} not found in releases, defaulting to 'master' channel", actual_version);
     Ok("master".to_string())
 }
 
@@ -312,6 +365,11 @@ fn verify_installed(version: &str) -> Result<bool> {
 
 async fn install(version: &str) -> Result<()> {
     debug!("Starting installation of Flutter version: {}", version);
+
+    // Get the repository URL (may be a fork)
+    let repo_url = get_flutter_repo_url(version).await?;
+    debug!("Using Flutter repository: {}", repo_url);
+
     let engine_hash = fetch_engine_hash(version).await?;
     debug!("Engine hash for version {}: {}", version, engine_hash);
 
@@ -326,7 +384,7 @@ async fn install(version: &str) -> Result<()> {
 
     debug!("Installing engine and Flutter in parallel");
     let (engine_result, flutter_result) =
-        tokio::join!(install_engine(&engine_dir), install_flutter(&flutter_dir, version, &channel),);
+        tokio::join!(install_engine(&engine_dir), install_flutter(&flutter_dir, version, &channel, &repo_url),);
 
     engine_result?;
     flutter_result?;
@@ -339,9 +397,12 @@ async fn install(version: &str) -> Result<()> {
 }
 
 async fn fetch_engine_hash(version: &str) -> Result<String> {
+    // Strip fork alias if present
+    let actual_version = strip_fork_alias(version);
+
     let url = format!(
         "https://raw.githubusercontent.com/flutter/flutter/{}/bin/internal/engine.version",
-        version
+        actual_version
     );
     debug!("Fetching engine hash from: {}", url);
 
@@ -444,12 +505,11 @@ async fn install_engine(engine_dir: &PathBuf) -> Result<()> {
     return Ok(());
 }
 
-async fn install_flutter(version_dir: &PathBuf, version: &str, channel: &str) -> Result<()> {
-    let url = "https://github.com/flutter/flutter.git";
+async fn install_flutter(version_dir: &PathBuf, version: &str, channel: &str, repo_url: &str) -> Result<()> {
     let shared_dir = utils::shared_flutter_dir()?;
-    debug!("Setting up Flutter repository from: {}", url);
+    debug!("Setting up Flutter repository from: {}", repo_url);
 
-    let repo = ensure_shared_repo(url, &shared_dir).await?;
+    let repo = ensure_shared_repo(repo_url, &shared_dir).await?;
 
     let parent_dir = version_dir.parent().unwrap();
     debug!("Creating parent directory: {}", parent_dir.display());

@@ -4,7 +4,7 @@ use dialoguer::{theme::ColorfulTheme, Select};
 use std::env;
 use tracing::info;
 
-use crate::{config_manager, gitignore_manager, sdk_manager};
+use crate::{config_manager, gitignore_manager, ide_manager, sdk_manager};
 
 #[derive(Debug, Clone, Args)]
 pub struct UseArgs {
@@ -116,6 +116,58 @@ pub async fn run(args: UseArgs) -> Result<()> {
     gitignore_manager::update_fvm_gitignore(&current_dir)
         .await
         .context("Failed to update .fvm/.gitignore")?;
+
+    // Read global config to check IDE integration settings
+    let global_config = config_manager::GlobalConfig::read().await?;
+
+    // Update VS Code settings if enabled (default: true)
+    if global_config.update_vscode_settings.unwrap_or(true) {
+        info!("Updating VS Code settings");
+        match ide_manager::update_vscode_settings(&current_dir).await {
+            Ok(()) => {
+                tracing::debug!("VS Code settings updated successfully");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to update VS Code settings: {}", e);
+            }
+        }
+
+        // Also update workspace files if present
+        match ide_manager::update_vscode_workspace(&current_dir).await {
+            Ok(()) => {
+                tracing::debug!("VS Code workspace files updated successfully");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to update VS Code workspace files: {}", e);
+            }
+        }
+    }
+
+    // Update IntelliJ/Android Studio settings if enabled (default: true)
+    if global_config.update_vscode_settings.unwrap_or(true) {
+        info!("Updating IntelliJ/Android Studio settings");
+        match ide_manager::update_intellij_settings(&current_dir).await {
+            Ok(()) => {
+                tracing::debug!("IntelliJ settings updated successfully");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to update IntelliJ settings: {}", e);
+            }
+        }
+    }
+
+    // Update project .gitignore if enabled (default: false for backward compatibility)
+    if global_config.update_gitignore.unwrap_or(false) {
+        info!("Updating project .gitignore");
+        match gitignore_manager::update_project_gitignore(&current_dir).await {
+            Ok(()) => {
+                tracing::debug!("Project .gitignore updated successfully");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to update project .gitignore: {}", e);
+            }
+        }
+    }
 
     // Run flutter pub get unless skipped
     if !args.skip_pub_get {
