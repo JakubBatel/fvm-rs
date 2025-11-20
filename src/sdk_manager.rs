@@ -166,8 +166,13 @@ pub async fn list_installed_versions() -> Result<Vec<String>> {
 pub async fn list_available_versions() -> Result<FlutterReleases> {
     let platform = std::env::consts::OS;
 
+    // Check for FLUTTER_STORAGE_BASE_URL override
+    let base_url = std::env::var("FLUTTER_STORAGE_BASE_URL")
+        .unwrap_or_else(|_| "https://storage.googleapis.com".to_string());
+
     let url = format!(
-        "https://storage.googleapis.com/flutter_infra_release/releases/releases_{platform}.json"
+        "{}/flutter_infra_release/releases/releases_{}.json",
+        base_url, platform
     );
     debug!("Fetching available Flutter releases from: {}", url);
     let response = reqwest::get(&url)
@@ -441,9 +446,13 @@ async fn install_engine(engine_dir: &PathBuf) -> Result<()> {
     let engine_hash = engine_dir.file_name().unwrap().to_str().unwrap();
     debug!("Installing engine {} for {}-{}", engine_hash, platform, arch);
 
+    // Check for FLUTTER_STORAGE_BASE_URL override
+    let base_url = std::env::var("FLUTTER_STORAGE_BASE_URL")
+        .unwrap_or_else(|_| "https://storage.googleapis.com".to_string());
+
     let url = format!(
-        "https://storage.googleapis.com/flutter_infra_release/flutter/{}/dart-sdk-{}-{}.zip",
-        engine_hash, platform, arch
+        "{}/flutter_infra_release/flutter/{}/dart-sdk-{}-{}.zip",
+        base_url, engine_hash, platform, arch
     );
     debug!("Downloading engine from: {}", url);
 

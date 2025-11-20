@@ -289,35 +289,98 @@ To maintain FVM compatibility:
 
 ## Current Implementation Status
 
-### Implemented Commands
-- `install <version>` - Downloads and caches a Flutter SDK version
-- `use <version>` - Sets Flutter SDK version for current project (creates `.fvm/fvm_config.json`)
-- `list` - List installed versions (alias: `ls`)
+**FVM Parity: 100% Complete** 🎯
+
+All user-facing features from the original FVM have been implemented. See `fvm-parity-plan.md` for detailed implementation tracking.
+
+### Implemented Commands (15/17)
+
+**Core Commands:**
+- `install [version]` - Downloads and caches a Flutter SDK version (supports project config)
+- `use [version]` - Sets Flutter SDK version for current project with full flag support
+- `list` / `ls` - List installed versions
 - `releases --channel <channel>` - Show available releases with pretty tables
-- `remove <version>` - Remove installed version (alias: `rm`)
-- `config` - Manages global configuration settings (cache path, git cache, Flutter URL, etc.)
+- `remove <version>` / `rm` - Remove installed version (supports `--all` flag)
 - `global [version]` - Sets or displays the global Flutter SDK version
+
+**Configuration & Management:**
+- `config` - Manages global configuration settings (cache path, git cache, Flutter URL, etc.)
+- `doctor` - Diagnostics and troubleshooting (project info, IDE integration, environment validation)
+- `flavor <flavor> <command>` - Execute Flutter commands with flavor-specific SDK
+
+**Execution Commands:**
 - `flutter [args...]` - Runs Flutter commands using the project's configured SDK version
 - `dart [args...]` - Runs Dart commands using the project's configured Flutter SDK
+- `exec <command>` - Run commands in FVM context with project/global SDK
+- `spawn <version> <command>` - Run commands with a specific Flutter version (auto-installs if needed)
+- `destroy` - Completely remove FVM cache directory
 
-### Engine Linking - FIXED ✓
-The engine linking now works correctly:
+**Advanced Features:**
+- `fork add/remove/list` - Manage custom Flutter repository forks
+- `api list/releases/context/project` - JSON API for tooling integrations
+
+### Complete Feature Set
+
+**install command:**
+- ✅ Interactive version selector (channels + recent releases)
+- ✅ Installs from project config when no version provided
+- ✅ `--skip-setup` flag support
+
+**use command:**
+- ✅ Interactive version selector (installed versions)
+- ✅ Automatic `flutter pub get` (unless `--skip-pub-get`)
+- ✅ `--skip-pub-get` flag
+- ✅ `--skip-setup` flag
+- ✅ `--force` flag for bypassing validation
+- ✅ `--flavor` / `--env` flag for multi-environment projects
+- ✅ `--pin` flag to pin channel to latest release (Phase 5)
+- ✅ Flavor name resolution (e.g., `fvm-rs use production`)
+- ✅ IDE integration (VS Code, IntelliJ/Android Studio)
+
+**global command:**
+- ✅ Interactive version selector
+- ✅ `--unlink` flag to remove global version
+- ✅ `--force` flag to skip validation
+- ✅ PATH validation warnings
+- ✅ VS Code/IntelliJ IDE warnings (Phase 5)
+
+**Flavor Support:**
+- ✅ Multi-environment project management (production/dev/staging)
+- ✅ Pin versions to flavors: `fvm-rs use <version> --flavor <name>`
+- ✅ Switch to flavor: `fvm-rs use <flavor_name>`
+- ✅ Run with flavor: `fvm-rs flavor <flavor_name> <flutter_command>`
+
+**Fork Support:**
+- ✅ Custom Flutter repository management
+- ✅ `fork add <alias> <git-url>` - Add custom repository
+- ✅ `fork remove <alias>` - Remove fork
+- ✅ `fork list` - List all forks
+- ✅ `alias/version` syntax support (e.g., `fvm-rs install mycompany/stable`)
+
+**Environment Variables:**
+- ✅ `FVM_CACHE_PATH` - Custom cache directory
+- ✅ `FVM_USE_GIT_CACHE` - Enable/disable git cache
+- ✅ `FVM_GIT_CACHE_PATH` - Git reference cache path
+- ✅ `FVM_FLUTTER_URL` - Custom Flutter repository URL
+- ✅ `FLUTTER_STORAGE_BASE_URL` - Override storage base URL (Phase 5)
+
+**API Commands (JSON output for tooling):**
+- ✅ `api list` - Installed versions
+- ✅ `api releases` - Available releases
+- ✅ `api context` - Environment information
+- ✅ `api project` - Project configuration
+- ✅ `--compress` flag for compact JSON
+
+### Engine Linking ✓
+The engine linking works correctly:
 - Engines are cached in `~/.fvm-rs/shared/engine/{hash}/` (deduplication enabled)
 - Proper symlink structure: `flutter/bin/cache/dart-sdk -> shared/engine/{hash}/`
 - Marker files created: `engine.stamp`, `engine-dart-sdk.stamp`, `engine.realm`
 - Flutter no longer attempts to re-download the engine
 
-### Missing for FVM Parity
-- `exec` command for running commands in FVM context
-- `doctor` command
-- `spawn` command for running commands with a specific version
-- `destroy` command to completely remove FVM cache
-- Flavor support (project variants)
-- Fork/custom Flutter repository support (add/remove/list subcommands)
-- `--skip-pub-get` and `--skip-setup` flags for `use` command
-
-### Known TODOs
-- `use` command should optionally run `flutter pub get` (needs `--skip-pub-get` flag)
+### Not Implemented (2/17 - Internal Use Only)
+- `integration-test` - Internal FVM testing command (not needed for end users)
+- `context` - Deprecated in favor of `api context` command
 
 ## Reference Implementation
 

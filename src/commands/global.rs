@@ -128,5 +128,18 @@ async fn check_path_configuration() -> Result<()> {
         }
     }
 
+    // Check if running in VS Code and show IDE-specific warning
+    if is_vscode() {
+        println!("\n⚠️  Notice: VS Code might override the PATH to Flutter in their terminal");
+        println!("   Run the command outside of the IDE to verify.");
+    }
+
     Ok(())
+}
+
+/// Check if running inside VS Code terminal
+fn is_vscode() -> bool {
+    std::env::var("TERM_PROGRAM")
+        .map(|val| val == "vscode")
+        .unwrap_or(false)
 }

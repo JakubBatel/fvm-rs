@@ -26,6 +26,10 @@ pub struct UseArgs {
     /// Pin this version to a specific project flavor/environment
     #[arg(long, visible_alias = "env", value_name = "FLAVOR_NAME")]
     flavor: Option<String>,
+
+    /// Pin the latest release of a channel instead of using the channel directly
+    #[arg(long, short = 'p')]
+    pin: bool,
 }
 
 pub async fn run(args: UseArgs) -> Result<()> {
@@ -33,11 +37,43 @@ pub async fn run(args: UseArgs) -> Result<()> {
     let current_dir = env::current_dir().context("Failed to get current directory")?;
 
     // Get version from args or interactive selector
-    let version_input = if let Some(v) = args.version {
+    let mut version_input = if let Some(v) = args.version {
         v
     } else {
         select_version_interactively().await?
     };
+
+    // Handle --pin flag: convert channel to latest release version
+    if args.pin {
+        // Validate that it's a channel (stable, beta, dev) and not master
+        if !config_manager::is_channel(&version_input) {
+            anyhow::bail!(
+                "Cannot pin a version that is not in dev, beta or stable channels."
+            );
+        }
+
+        if version_input == "master" {
+            anyhow::bail!(
+                "Cannot pin master channel. Only dev, beta, and stable channels can be pinned."
+            );
+        }
+
+        // Fetch latest release for the channel
+        info!("Fetching latest release for {} channel", version_input);
+        let releases = sdk_manager::list_available_versions().await?;
+
+        let latest_release = match version_input.as_str() {
+            "stable" => &releases.current_releases.stable,
+            "beta" => &releases.current_releases.beta,
+            "dev" => &releases.current_releases.dev,
+            _ => unreachable!(),
+        };
+
+        println!("Pinning version {} from \"{}\" release channel...",
+                 latest_release.version, version_input);
+
+        version_input = latest_release.version.clone();
+    }
 
     // Check if version_input is actually a flavor name in the project config
     let (resolved_version, is_flavor_switch) = resolve_version_or_flavor(&current_dir, &version_input).await?;

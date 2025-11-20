@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
 use clap::Args;
 use dialoguer::{theme::ColorfulTheme, Select};
+use std::env;
 use tracing::info;
 
-use crate::sdk_manager;
+use crate::{config_manager, sdk_manager};
 
 #[derive(Debug, Clone, Args)]
 pub struct InstallArgs {
@@ -16,11 +17,20 @@ pub struct InstallArgs {
 }
 
 pub async fn run(args: InstallArgs) -> Result<()> {
-    // Get version from args or interactive selector
+    // Get version from args, project config, or interactive selector
     let version = if let Some(v) = args.version {
         v
     } else {
-        select_version_interactively().await?
+        // Try to read project config first
+        let current_dir = env::current_dir().context("Failed to get current directory")?;
+        if let Some(config) = config_manager::read_project_config(&current_dir).await? {
+            println!("Installing Flutter SDK from project config...");
+            info!("Using version from project config: {}", config.flutter);
+            config.flutter
+        } else {
+            // Fall back to interactive selector
+            select_version_interactively().await?
+        }
     };
 
     info!("Starting installation of Flutter SDK {}", version);
